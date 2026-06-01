@@ -186,9 +186,9 @@ export default function App() {
           onCancel={() => setEndDialogOpen(false)}
           onConfirm={() => {
             setEndDialogOpen(false)
-            void runWithToast(poker.endSession, 'Session ended')
+            if (poker.isAdmin) void runWithToast(poker.endSession, 'Session ended')
           }}
-          open={endDialogOpen}
+          open={endDialogOpen && poker.isAdmin}
           title="End this session?"
           variant="danger"
         />
