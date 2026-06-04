@@ -1,15 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Badge, Card, ConfirmDialog, EmptyState, ListRow } from '@freeappstore/sdk/ui'
 import type { Ticket, TicketInput } from '../../types/ticket'
 
 type TicketPanelProps = {
   activeTicket: Ticket | null
+  activeSprintName?: string
   isAdmin: boolean
   onNotify?: (message: string, variant: 'success' | 'error') => void
   onCreate: (input: TicketInput) => Promise<void>
   onDelete: (ticketId: string) => Promise<void>
   onSelect: (ticketId: string) => Promise<void>
-  onUpdate: (ticketId: string, input: TicketInput) => Promise<void>
   tickets: Ticket[]
 }
 
@@ -17,24 +17,17 @@ const emptyTicket = { title: '', description: '' }
 
 export function TicketPanel({
   activeTicket,
+  activeSprintName,
   isAdmin,
   onNotify,
   onCreate,
   onDelete,
   onSelect,
-  onUpdate,
   tickets,
 }: TicketPanelProps) {
   const [draft, setDraft] = useState<TicketInput>(emptyTicket)
-  const [editing, setEditing] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Ticket | null>(null)
   const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (activeTicket) {
-      setDraft({ title: activeTicket.title, description: activeTicket.description })
-    }
-  }, [activeTicket])
 
   async function saveTicket() {
     if (!draft.title.trim()) {
@@ -44,13 +37,8 @@ export function TicketPanel({
     }
 
     setError('')
-    if (editing && activeTicket) {
-      await onUpdate(activeTicket.id, { title: draft.title.trim(), description: draft.description.trim() })
-    } else {
-      await onCreate({ title: draft.title.trim(), description: draft.description.trim() })
-      setDraft(emptyTicket)
-    }
-    setEditing(false)
+    await onCreate({ title: draft.title.trim(), description: draft.description.trim() })
+    setDraft(emptyTicket)
   }
 
   return (
@@ -62,6 +50,7 @@ export function TicketPanel({
             <h2 className="mt-1 text-xl font-bold text-[var(--ink)]">
               {activeTicket?.title ?? 'No active ticket'}
             </h2>
+            {activeSprintName ? <p className="mt-1 text-xs font-semibold text-[var(--muted)]">{activeSprintName}</p> : null}
           </div>
           {activeTicket?.finalEstimate ? <Badge variant="success">{activeTicket.finalEstimate} pts</Badge> : null}
         </div>
@@ -75,7 +64,7 @@ export function TicketPanel({
       {isAdmin ? (
         <div className="grid gap-3 p-5">
           <label className="text-sm font-semibold text-[var(--ink)]" htmlFor="ticket-title">
-            {editing ? 'Update ticket' : 'Create ticket'}
+            Create ticket
           </label>
           <input
             id="ticket-title"
@@ -93,16 +82,8 @@ export function TicketPanel({
           {error ? <p className="text-sm text-[var(--error)]">{error}</p> : null}
           <div className="flex flex-wrap gap-2">
             <button className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white" onClick={saveTicket}>
-              {editing ? 'Save changes' : 'Create and select'}
+              Create and select
             </button>
-            {activeTicket ? (
-              <button
-                className="rounded-lg border border-[var(--line-strong)] px-4 py-2 text-sm font-bold text-[var(--ink)]"
-                onClick={() => setEditing((current) => !current)}
-              >
-                {editing ? 'Cancel edit' : 'Edit active'}
-              </button>
-            ) : null}
             {activeTicket ? (
               <button
                 className="rounded-lg border border-[var(--line-strong)] px-4 py-2 text-sm font-bold text-[var(--error)]"
@@ -116,7 +97,7 @@ export function TicketPanel({
       ) : null}
 
       <div className="border-t border-[var(--line)] p-3">
-        <p className="px-2 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">Backlog</p>
+        <p className="px-2 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">Sprint tickets</p>
         {tickets.length === 0 ? (
           <EmptyState message="No tickets have been created yet." />
         ) : (

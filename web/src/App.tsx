@@ -6,7 +6,11 @@ import { AdminControls } from './components/admin/AdminControls'
 import { EntryScreen } from './components/common/EntryScreen'
 import { ToastStack, type ToastMessage } from './components/common/ToastStack'
 import { RoundHistory } from './components/rounds/RoundHistory'
+import { SprintHistory } from './components/sprint/SprintHistory'
+import { SprintPanel } from './components/sprint/SprintPanel'
+import { SprintSummary } from './components/sprint/SprintSummary'
 import { TicketPanel } from './components/ticket/TicketPanel'
+import { TicketSummary } from './components/ticket/TicketSummary'
 import { VoteBoard } from './components/voting/VoteBoard'
 import { VotingPanel } from './components/voting/VotingPanel'
 import { usePlanningPoker } from './hooks/usePlanningPoker'
@@ -16,6 +20,9 @@ const fas = initApp({ appId: 'planning-poker' })
 
 export default function App() {
   const [endDialogOpen, setEndDialogOpen] = useState(false)
+  const [roundsDialogOpen, setRoundsDialogOpen] = useState(false)
+  const [sprintDialogOpen, setSprintDialogOpen] = useState(false)
+  const [ticketDialogOpen, setTicketDialogOpen] = useState(false)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const { signIn, user } = useAuth(fas)
   const sessionAccess = useSessionAccess()
@@ -42,8 +49,10 @@ export default function App() {
       try {
         await action()
         notify(successMessage, 'success')
+        return true
       } catch (caught) {
         notify(caught instanceof Error ? caught.message : 'Something went wrong', 'error')
+        return false
       }
     },
     [notify],
@@ -128,34 +137,53 @@ export default function App() {
           ) : null}
 
           {poker.status === 'ready' ? (
-            <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
-              <aside className="grid content-start gap-6">
-                <TicketPanel
-                  activeTicket={poker.activeTicket}
-                  isAdmin={poker.isAdmin && poker.canInteract}
-                  onCreate={(input) => runWithToast(() => poker.createTicket(input), 'Ticket created successfully')}
-                  onDelete={(ticketId) => runWithToast(() => poker.deleteTicket(ticketId), 'Ticket deleted')}
-                  onNotify={notify}
-                  onSelect={poker.selectTicket}
-                  onUpdate={(ticketId, input) =>
-                    runWithToast(() => poker.updateTicket(ticketId, input), 'Ticket updated successfully')
-                  }
-                  tickets={poker.tickets}
+            <>
+              <section className="mx-auto grid w-full max-w-5xl content-start gap-6">
+                <SprintSummary
+                  averageVelocity={poker.averageVelocity}
+                  pointsPerDay={poker.activeSprintPointsPerDay}
+                  sprint={poker.activeSprint}
+                  totalStoryPoints={poker.activeSprintTotal}
                 />
-                <RoundHistory rounds={poker.previousRounds} votes={poker.votes} />
-              </aside>
-
-              <section className="grid content-start gap-6">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="rounded-lg border border-[var(--line-strong)] px-4 py-2 text-sm font-bold text-[var(--ink)]"
+                    onClick={() => setSprintDialogOpen(true)}
+                  >
+                    Sprints
+                  </button>
+                  <button
+                    className="rounded-lg border border-[var(--line-strong)] px-4 py-2 text-sm font-bold text-[var(--ink)]"
+                    onClick={() => setRoundsDialogOpen(true)}
+                  >
+                    Rounds
+                  </button>
+                </div>
+                <TicketSummary
+                  activeSprintName={poker.activeSprint?.name}
+                  isAdmin={poker.isAdmin && poker.canInteract}
+                  onManage={() => setTicketDialogOpen(true)}
+                  onNotify={notify}
+                  onUpdate={async (ticketId, input) => {
+                    await runWithToast(() => poker.updateTicket(ticketId, input), 'Ticket updated successfully')
+                  }}
+                  ticket={poker.activeTicket}
+                  ticketCount={poker.tickets.length}
+                />
                 <VoteBoard
                   isAdmin={poker.isAdmin && poker.canInteract}
-                  onReveal={() => runWithToast(poker.revealRound, 'Votes revealed')}
+                  onReveal={async () => {
+                    await runWithToast(poker.revealRound, 'Votes revealed')
+                  }}
                   participantNames={participantNames}
                   round={poker.activeRound}
                   votes={poker.activeVotes}
                 />
                 <VotingPanel
                   currentUserVote={poker.currentUserVote}
-                  onSubmit={(input) => runWithToast(() => poker.submitVote(input), 'Vote submitted')}
+                  onSubmit={async (input) => {
+                    await runWithToast(() => poker.submitVote(input), 'Vote submitted')
+                  }}
                   participantName={participantName}
                   round={poker.activeRound}
                   ticket={poker.canInteract ? poker.activeTicket : null}
@@ -164,13 +192,15 @@ export default function App() {
                   activeRound={poker.activeRound}
                   activeTicket={poker.activeTicket}
                   isAdmin={poker.isAdmin && poker.canInteract}
-                  onConfirmEstimate={(estimate) =>
-                    runWithToast(() => poker.confirmFinalEstimate(estimate), 'Consensus estimate recorded')
-                  }
-                  onStartRound={() => runWithToast(poker.startNewRound, 'New round started')}
+                  onConfirmEstimate={async (estimate) => {
+                    await runWithToast(() => poker.confirmFinalEstimate(estimate), 'Consensus estimate recorded')
+                  }}
+                  onStartRound={async () => {
+                    await runWithToast(poker.startNewRound, 'New round started')
+                  }}
                 />
               </section>
-            </div>
+            </>
           ) : null}
           <footer className="py-4 text-center text-sm text-[var(--muted)]">
             Part of{' '}
@@ -180,6 +210,55 @@ export default function App() {
           </footer>
         </main>
         )}
+        <Modal open={Boolean(hasSessionIdentity && sprintDialogOpen)} onClose={() => setSprintDialogOpen(false)} title="Sprints">
+          <div className="grid max-h-[75dvh] gap-4 overflow-y-auto pr-1">
+            <SprintPanel
+              activeSprint={poker.activeSprint}
+              isAdmin={poker.isAdmin && !poker.sessionEnded}
+              onComplete={async () => {
+                const completed = await runWithToast(poker.completeSprint, 'Sprint summary saved')
+                if (completed) setSprintDialogOpen(false)
+              }}
+              onCreate={async (input) => {
+                const completed = await runWithToast(() => poker.createSprint(input), 'Sprint created successfully')
+                if (completed) setSprintDialogOpen(false)
+              }}
+              onSelect={async (sprintId) => {
+                const completed = await runWithToast(() => poker.selectSprint(sprintId), 'Sprint selected')
+                if (completed) setSprintDialogOpen(false)
+              }}
+              sprints={poker.sprints}
+            />
+            <SprintHistory sprints={poker.historicalSprints} />
+          </div>
+        </Modal>
+        <Modal open={Boolean(hasSessionIdentity && ticketDialogOpen)} onClose={() => setTicketDialogOpen(false)} title="Tickets">
+          <div className="max-h-[75dvh] overflow-y-auto pr-1">
+            <TicketPanel
+              activeTicket={poker.activeTicket}
+              activeSprintName={poker.activeSprint?.name}
+              isAdmin={poker.isAdmin && poker.canInteract}
+              onCreate={async (input) => {
+                const completed = await runWithToast(() => poker.createTicket(input), 'Ticket created successfully')
+                if (completed) setTicketDialogOpen(false)
+              }}
+              onDelete={async (ticketId) => {
+                await runWithToast(() => poker.deleteTicket(ticketId), 'Ticket deleted')
+              }}
+              onNotify={notify}
+              onSelect={async (ticketId) => {
+                const completed = await runWithToast(() => poker.selectTicket(ticketId), 'Ticket selected')
+                if (completed) setTicketDialogOpen(false)
+              }}
+              tickets={poker.tickets}
+            />
+          </div>
+        </Modal>
+        <Modal open={Boolean(hasSessionIdentity && roundsDialogOpen)} onClose={() => setRoundsDialogOpen(false)} title="Rounds">
+          <div className="max-h-[75dvh] overflow-y-auto pr-1">
+            <RoundHistory rounds={poker.previousRounds} votes={poker.votes} />
+          </div>
+        </Modal>
         <ConfirmDialog
           confirmLabel="End session"
           message="This will end the session for everyone. Existing tickets, rounds, votes, and final estimates remain visible, but new changes will be disabled."

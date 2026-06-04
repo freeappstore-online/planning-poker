@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FreeAppStore, User } from '@freeappstore/sdk'
+import { createSprintService } from '../services/sprintService'
 import type { FinalEstimate } from '../types/finalEstimate'
 import type { EstimationRound } from '../types/round'
 import type { PlanningPokerSession } from '../types/session'
+import type { Sprint, SprintInput } from '../types/sprint'
 import type { Ticket, TicketInput } from '../types/ticket'
 import type { Vote, VoteInput } from '../types/vote'
+import { calculateAverageVelocity, calculatePointsPerDay, calculateSprintTotal } from '../utils/metrics'
 import { usePlanningPokerRoom } from './usePlanningPokerRoom'
 
 type LoadState = 'idle' | 'loading' | 'ready' | 'error'
@@ -32,6 +35,7 @@ export function usePlanningPoker(
   const [rounds, setRounds] = useState<EstimationRound[]>([])
   const [votes, setVotes] = useState<Vote[]>([])
   const [finalEstimates, setFinalEstimates] = useState<FinalEstimate[]>([])
+  const [sprints, setSprints] = useState<Sprint[]>([])
   const [session, setSession] = useState<PlanningPokerSession | null>(null)
   const [status, setStatus] = useState<LoadState>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -40,12 +44,15 @@ export function usePlanningPoker(
     () => ({
       tickets: app.collections.collection('tickets'),
       sessions: app.collections.collection('sessions'),
+      sprints: app.collections.collection('sprints'),
       rounds: app.collections.collection('rounds'),
       votes: app.collections.collection('votes'),
       finalEstimates: app.collections.collection('final-estimates'),
     }),
     [app],
   )
+
+  const sprintService = useMemo(() => createSprintService(collections.sprints), [collections.sprints])
 
   const refresh = useCallback(async () => {
     if (!sessionId || !user) {
@@ -57,8 +64,9 @@ export function usePlanningPoker(
     setError(null)
 
     try {
-      const [sessionResult, ticketResult, roundResult, voteResult, estimateResult] = await Promise.all([
+      const [sessionResult, sprintResult, ticketResult, roundResult, voteResult, estimateResult] = await Promise.all([
         collections.sessions.query<PlanningPokerSession>({ limit: 100, orderBy: 'createdAt', order: 'asc' }),
+        collections.sprints.query<Sprint>({ limit: 100, orderBy: 'updatedAt', order: 'desc' }),
         collections.tickets.query<Ticket>({ limit: 100, orderBy: 'updatedAt', order: 'desc' }),
         collections.rounds.query<EstimationRound>({ limit: 500, orderBy: 'createdAt', order: 'asc' }),
         collections.votes.query<Vote>({ limit: 1000, orderBy: 'createdAt', order: 'asc' }),
@@ -79,6 +87,11 @@ export function usePlanningPoker(
       }
 
       setSession(activeSession)
+      setSprints(
+        sprintResult.documents.filter(
+          (document) => document.userId === user.id || document.sessionId === sessionId || (!document.userId && !document.sessionId),
+        ),
+      )
       setTickets(ticketResult.documents.filter((document) => document.sessionId === sessionId))
       setRounds(roundResult.documents.filter((document) => document.sessionId === sessionId))
       setVotes(voteResult.documents.filter((document) => document.sessionId === sessionId))
@@ -92,7 +105,21 @@ export function usePlanningPoker(
 
   const isAdmin = Boolean(sessionId && hasOwnerToken)
   const sessionEnded = session?.status === 'ended'
-  const activeTicket = tickets.find((ticket) => ticket.id === session?.activeTicketId) ?? tickets[0] ?? null
+  const activeSprint =
+    sprints.find((sprint) => sprint.id === session?.activeSprintId) ??
+    sprints.find((sprint) => sprint.status !== 'completed') ??
+    null
+  const sprintTickets = activeSprint ? tickets.filter((ticket) => ticket.sprintId === activeSprint.id) : tickets
+  const historicalSprints = sprints
+    .filter((sprint) => sprint.status === 'completed')
+    .sort((first, second) => (second.completedAt ?? second.updatedAt).localeCompare(first.completedAt ?? first.updatedAt))
+  const activeSprintTotal = calculateSprintTotal(sprintTickets)
+  const activeSprintPointsPerDay = activeSprint
+    ? calculatePointsPerDay(activeSprintTotal, activeSprint.durationDays)
+    : 0
+  const averageVelocity = calculateAverageVelocity(historicalSprints)
+  const activeSprintLocked = activeSprint?.status === 'completed'
+  const activeTicket = sprintTickets.find((ticket) => ticket.id === session?.activeTicketId) ?? sprintTickets[0] ?? null
   const activeRound = activeTicket
     ? rounds.find((round) => round.id === activeTicket.activeRoundId) ??
       rounds.filter((round) => round.ticketId === activeTicket.id).at(-1) ??
@@ -128,11 +155,14 @@ export function usePlanningPoker(
   const createTicket = useCallback(
     async (input: TicketInput) => {
       if (!sessionId || sessionEnded) return
+      if (!activeSprint) throw new Error('Create or select a sprint before adding tickets.')
+      if (activeSprintLocked) throw new Error('Select an active sprint before adding tickets.')
 
       const timestamp = now()
       const ticket = await collections.tickets.create({
         ...input,
         sessionId,
+        sprintId: activeSprint.id,
         createdAt: timestamp,
         updatedAt: timestamp,
       })
@@ -150,42 +180,52 @@ export function usePlanningPoker(
           updatedAt: now(),
         })
       }
+      await sprintService.updateTicketSummary(activeSprint, [...tickets, { ...ticket, activeRoundId: round.id }])
       room.publish({ type: 'ticket:changed' })
       await refresh()
     },
-    [collections, refresh, room, session, sessionEnded, sessionId],
+    [activeSprint, activeSprintLocked, collections, refresh, room, session, sessionEnded, sessionId, sprintService, tickets],
   )
 
   const updateTicket = useCallback(
     async (ticketId: string, input: TicketInput) => {
       if (sessionEnded) return
+      if (activeSprintLocked) return
       await collections.tickets.update<Ticket>(ticketId, { ...input, updatedAt: now() })
+      if (activeSprint) {
+        await sprintService.updateTicketSummary(activeSprint, tickets.map((ticket) => (ticket.id === ticketId ? { ...ticket, ...input } : ticket)))
+      }
       room.publish({ type: 'ticket:changed' })
       await refresh()
     },
-    [collections, refresh, room, sessionEnded],
+    [activeSprint, activeSprintLocked, collections, refresh, room, sessionEnded, sprintService, tickets],
   )
 
   const deleteTicket = useCallback(
     async (ticketId: string) => {
       if (!session) return
       if (sessionEnded) return
+      if (activeSprintLocked) return
       await collections.tickets.delete(ticketId)
-      const nextTicket = tickets.find((ticket) => ticket.id !== ticketId)
+      const nextTicket = sprintTickets.find((ticket) => ticket.id !== ticketId)
       await collections.sessions.update<PlanningPokerSession>(session.id, {
         activeTicketId: nextTicket?.id,
         updatedAt: now(),
       })
+      if (activeSprint) {
+        await sprintService.updateTicketSummary(activeSprint, tickets.filter((ticket) => ticket.id !== ticketId))
+      }
       room.publish({ type: 'ticket:changed' })
       await refresh()
     },
-    [collections, refresh, room, session, sessionEnded, tickets],
+    [activeSprint, activeSprintLocked, collections, refresh, room, session, sessionEnded, sprintService, sprintTickets, tickets],
   )
 
   const selectTicket = useCallback(
     async (ticketId: string) => {
       if (!session) return
       if (sessionEnded) return
+      if (activeSprintLocked) return
       await collections.sessions.update<PlanningPokerSession>(session.id, {
         activeTicketId: ticketId,
         updatedAt: now(),
@@ -193,16 +233,18 @@ export function usePlanningPoker(
       room.publish({ type: 'ticket:changed' })
       await refresh()
     },
-    [collections, refresh, room, session, sessionEnded],
+    [activeSprintLocked, collections, refresh, room, session, sessionEnded],
   )
 
   const submitVote = useCallback(
     async (input: VoteInput) => {
       if (!activeRound || !activeTicket || !sessionId || !participantName.trim() || sessionEnded) return
+      if (activeSprintLocked) return
 
       const existingVote = activeVotes.find((vote) => vote.participantName === participantName)
       const payload = {
         sessionId,
+        sprintId: activeSprint?.id,
         ticketId: activeTicket.id,
         roundId: activeRound.id,
         participantName,
@@ -220,19 +262,21 @@ export function usePlanningPoker(
       room.publish({ type: 'vote:submitted' })
       await refresh()
     },
-    [activeRound, activeTicket, activeVotes, collections, participantName, refresh, room, sessionEnded, sessionId],
+    [activeRound, activeSprintLocked, activeTicket, activeVotes, collections, participantName, refresh, room, sessionEnded, sessionId],
   )
 
   const revealRound = useCallback(async () => {
     if (!activeRound) return
     if (sessionEnded) return
+    if (activeSprintLocked) return
     await collections.rounds.update<EstimationRound>(activeRound.id, { revealed: true, revealedAt: now() })
     room.publish({ type: 'round:revealed' })
     await refresh()
-  }, [activeRound, collections, refresh, room, sessionEnded])
+  }, [activeRound, activeSprintLocked, collections, refresh, room, sessionEnded])
 
   const startNewRound = useCallback(async () => {
     if (!activeTicket || !sessionId || sessionEnded) return
+    if (activeSprintLocked) return
     const ticketRounds = rounds.filter((round) => round.ticketId === activeTicket.id)
     const round = await collections.rounds.create({
       sessionId,
@@ -244,11 +288,12 @@ export function usePlanningPoker(
     await collections.tickets.update<Ticket>(activeTicket.id, { activeRoundId: round.id, updatedAt: now() })
     room.publish({ type: 'round:started' })
     await refresh()
-  }, [activeTicket, collections, refresh, room, rounds, sessionEnded, sessionId])
+  }, [activeSprintLocked, activeTicket, collections, refresh, room, rounds, sessionEnded, sessionId])
 
   const confirmFinalEstimate = useCallback(
     async (estimate: number) => {
       if (!activeTicket || !sessionId || !user || sessionEnded) return
+      if (activeSprintLocked) return
       const timestamp = now()
       await collections.finalEstimates.create({
         sessionId,
@@ -258,11 +303,54 @@ export function usePlanningPoker(
         createdAt: timestamp,
       })
       await collections.tickets.update<Ticket>(activeTicket.id, { finalEstimate: estimate, updatedAt: timestamp })
+      if (activeSprint) {
+        await sprintService.updateTicketSummary(
+          activeSprint,
+          tickets.map((ticket) => (ticket.id === activeTicket.id ? { ...ticket, finalEstimate: estimate } : ticket)),
+        )
+      }
       room.publish({ type: 'estimate:confirmed' })
       await refresh()
     },
-    [activeTicket, collections, refresh, room, sessionEnded, sessionId, user],
+    [activeSprint, activeSprintLocked, activeTicket, collections, refresh, room, sessionEnded, sessionId, sprintService, tickets, user],
   )
+
+  const createSprint = useCallback(
+    async (input: SprintInput) => {
+      if (!session || !sessionId || !user || sessionEnded) return
+      const sprint = await sprintService.create(input, user.id, sessionId)
+      await collections.sessions.update<PlanningPokerSession>(session.id, {
+        activeSprintId: sprint.id,
+        activeTicketId: undefined,
+        updatedAt: now(),
+      })
+      room.publish({ type: 'sprint:changed' })
+      await refresh()
+    },
+    [collections.sessions, refresh, room, session, sessionEnded, sessionId, sprintService, user],
+  )
+
+  const selectSprint = useCallback(
+    async (sprintId: string) => {
+      if (!session || sessionEnded) return
+      const nextTicket = tickets.find((ticket) => ticket.sprintId === sprintId)
+      await collections.sessions.update<PlanningPokerSession>(session.id, {
+        activeSprintId: sprintId,
+        activeTicketId: nextTicket?.id,
+        updatedAt: now(),
+      })
+      room.publish({ type: 'sprint:changed' })
+      await refresh()
+    },
+    [collections.sessions, refresh, room, session, sessionEnded, tickets],
+  )
+
+  const completeSprint = useCallback(async () => {
+    if (!activeSprint || sessionEnded) return
+    await sprintService.complete(activeSprint, tickets)
+    room.publish({ type: 'sprint:changed' })
+    await refresh()
+  }, [activeSprint, refresh, room, sessionEnded, sprintService, tickets])
 
   const endSession = useCallback(async () => {
     if (!session || !user || !isAdmin) return
@@ -276,14 +364,20 @@ export function usePlanningPoker(
     await refresh()
   }, [collections, isAdmin, refresh, room, session, user])
 
-  const canInteract = !sessionEnded
+  const canInteract = !sessionEnded && !activeSprintLocked
 
   return {
     activeRound,
+    activeSprint,
+    activeSprintPointsPerDay,
+    activeSprintTotal,
     activeTicket,
     activeVotes,
+    averageVelocity,
     canInteract,
+    completeSprint,
     connectionState: room.connectionState,
+    createSprint,
     createTicket,
     currentUserVote,
     deleteTicket,
@@ -299,10 +393,14 @@ export function usePlanningPoker(
     selectTicket,
     session,
     sessionEnded,
+    selectSprint,
     startNewRound,
     status,
     submitVote,
-    tickets: tickets.map((ticket) => ({ ...withoutId(ticket), id: ticket.id })),
+    sprints,
+    sprintTickets: sprintTickets.map((ticket) => ({ ...withoutId(ticket), id: ticket.id })),
+    historicalSprints,
+    tickets: sprintTickets.map((ticket) => ({ ...withoutId(ticket), id: ticket.id })),
     updateTicket,
     votes,
     confirmFinalEstimate,

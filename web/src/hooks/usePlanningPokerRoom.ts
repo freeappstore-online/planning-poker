@@ -7,6 +7,7 @@ type RoomEvent =
   | { type: 'round:revealed' }
   | { type: 'round:started' }
   | { type: 'estimate:confirmed' }
+  | { type: 'sprint:changed' }
   | { type: 'session:ended' }
 
 export type PlanningPokerRoomEvent = RoomEvent

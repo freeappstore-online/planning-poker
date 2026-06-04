@@ -5,6 +5,7 @@ export type PlanningPokerSession = {
   adminUserId?: string
   ownerTokenCreatedAt?: string
   activeTicketId?: string
+  activeSprintId?: string
   status?: 'active' | 'ended'
   endedAt?: string
   endedBy?: string
