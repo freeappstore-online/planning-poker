@@ -1,6 +1,7 @@
 export type Vote = {
   id: string
   sessionId?: string
+  sprintId?: string
   ticketId: string
   roundId: string
   participantName: string

@@ -146,12 +146,14 @@ export default function App() {
                   totalStoryPoints={poker.activeSprintTotal}
                 />
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    className="rounded-lg border border-[var(--line-strong)] px-4 py-2 text-sm font-bold text-[var(--ink)]"
-                    onClick={() => setSprintDialogOpen(true)}
-                  >
-                    Sprints
-                  </button>
+                  {poker.isAdmin ? (
+                    <button
+                      className="rounded-lg border border-[var(--line-strong)] px-4 py-2 text-sm font-bold text-[var(--ink)]"
+                      onClick={() => setSprintDialogOpen(true)}
+                    >
+                      Sprints
+                    </button>
+                  ) : null}
                   <button
                     className="rounded-lg border border-[var(--line-strong)] px-4 py-2 text-sm font-bold text-[var(--ink)]"
                     onClick={() => setRoundsDialogOpen(true)}
@@ -210,7 +212,7 @@ export default function App() {
           </footer>
         </main>
         )}
-        <Modal open={Boolean(hasSessionIdentity && sprintDialogOpen)} onClose={() => setSprintDialogOpen(false)} title="Sprints">
+        <Modal open={Boolean(hasSessionIdentity && poker.isAdmin && sprintDialogOpen)} onClose={() => setSprintDialogOpen(false)} title="Sprints">
           <div className="grid max-h-[75dvh] gap-4 overflow-y-auto pr-1">
             <SprintPanel
               activeSprint={poker.activeSprint}

@@ -86,16 +86,56 @@ export function usePlanningPoker(
         })
       }
 
+      const activeSessionSprintId = activeSession?.activeSprintId
+      const visibleSprints = sprintResult.documents.filter((document) => {
+        if (hasOwnerToken) {
+          return document.userId === user.id || document.sessionId === sessionId || (!document.userId && !document.sessionId)
+        }
+
+        return document.id === activeSessionSprintId
+      })
+      const visibleSprintIds = new Set(visibleSprints.map((sprint) => sprint.id))
+      const visibleTickets = ticketResult.documents.filter((document) => {
+        if (hasOwnerToken) {
+          return document.sessionId === sessionId || (document.sprintId ? visibleSprintIds.has(document.sprintId) : false)
+        }
+
+        return (
+          document.id === activeSession?.activeTicketId ||
+          (document.sprintId ? visibleSprintIds.has(document.sprintId) : false) ||
+          (!document.sprintId && document.sessionId === sessionId)
+        )
+      })
+      const visibleTicketIds = new Set(visibleTickets.map((ticket) => ticket.id))
+      const visibleRounds = roundResult.documents.filter(
+        (document) =>
+          document.sessionId === sessionId ||
+          visibleTicketIds.has(document.ticketId) ||
+          (document.sprintId ? visibleSprintIds.has(document.sprintId) : false),
+      )
+      const visibleRoundIds = new Set(visibleRounds.map((round) => round.id))
+
       setSession(activeSession)
-      setSprints(
-        sprintResult.documents.filter(
-          (document) => document.userId === user.id || document.sessionId === sessionId || (!document.userId && !document.sessionId),
+      setSprints(visibleSprints)
+      setTickets(visibleTickets)
+      setRounds(visibleRounds)
+      setVotes(
+        voteResult.documents.filter(
+          (document) =>
+            document.sessionId === sessionId ||
+            visibleTicketIds.has(document.ticketId) ||
+            visibleRoundIds.has(document.roundId) ||
+            (document.sprintId ? visibleSprintIds.has(document.sprintId) : false),
         ),
       )
-      setTickets(ticketResult.documents.filter((document) => document.sessionId === sessionId))
-      setRounds(roundResult.documents.filter((document) => document.sessionId === sessionId))
-      setVotes(voteResult.documents.filter((document) => document.sessionId === sessionId))
-      setFinalEstimates(estimateResult.documents.filter((document) => document.sessionId === sessionId))
+      setFinalEstimates(
+        estimateResult.documents.filter(
+          (document) =>
+            document.sessionId === sessionId ||
+            visibleTicketIds.has(document.ticketId) ||
+            (document.sprintId ? visibleSprintIds.has(document.sprintId) : false),
+        ),
+      )
       setStatus('ready')
     } catch (caught) {
       setStatus('error')
@@ -110,9 +150,11 @@ export function usePlanningPoker(
     sprints.find((sprint) => sprint.status !== 'completed') ??
     null
   const sprintTickets = activeSprint ? tickets.filter((ticket) => ticket.sprintId === activeSprint.id) : tickets
-  const historicalSprints = sprints
-    .filter((sprint) => sprint.status === 'completed')
-    .sort((first, second) => (second.completedAt ?? second.updatedAt).localeCompare(first.completedAt ?? first.updatedAt))
+  const historicalSprints = isAdmin
+    ? sprints
+        .filter((sprint) => sprint.status === 'completed')
+        .sort((first, second) => (second.completedAt ?? second.updatedAt).localeCompare(first.completedAt ?? first.updatedAt))
+    : []
   const activeSprintTotal = calculateSprintTotal(sprintTickets)
   const activeSprintPointsPerDay = activeSprint
     ? calculatePointsPerDay(activeSprintTotal, activeSprint.durationDays)
@@ -168,6 +210,7 @@ export function usePlanningPoker(
       })
       const round = await collections.rounds.create({
         sessionId,
+        sprintId: activeSprint.id,
         ticketId: ticket.id,
         roundNumber: 1,
         revealed: false,
@@ -280,6 +323,7 @@ export function usePlanningPoker(
     const ticketRounds = rounds.filter((round) => round.ticketId === activeTicket.id)
     const round = await collections.rounds.create({
       sessionId,
+      sprintId: activeSprint?.id,
       ticketId: activeTicket.id,
       roundNumber: ticketRounds.length + 1,
       revealed: false,
@@ -297,6 +341,7 @@ export function usePlanningPoker(
       const timestamp = now()
       await collections.finalEstimates.create({
         sessionId,
+        sprintId: activeSprint?.id,
         ticketId: activeTicket.id,
         estimate,
         recordedBy: user.login,
