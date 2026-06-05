@@ -231,7 +231,15 @@ export default function App() {
               }}
               sprints={poker.sprints}
             />
-            <SprintHistory sprints={poker.historicalSprints} />
+            <SprintHistory
+              onArchive={async (sprintId, archived) => {
+                await runWithToast(
+                  () => poker.archiveSprint(sprintId, archived),
+                  archived ? 'Sprint archived' : 'Sprint unarchived',
+                )
+              }}
+              sprints={poker.historicalSprints}
+            />
           </div>
         </Modal>
         <Modal open={Boolean(hasSessionIdentity && ticketDialogOpen)} onClose={() => setTicketDialogOpen(false)} title="Tickets">

@@ -15,6 +15,8 @@ export type Sprint = {
   ticketIds: string[]
   totalFinalStoryPoints: number
   status: SprintStatus
+  archived?: boolean
+  archivedAt?: string
   createdAt: string
   updatedAt: string
   completedAt?: string

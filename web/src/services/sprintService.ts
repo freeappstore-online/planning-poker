@@ -33,6 +33,7 @@ export function createSprintService(collection: SprintCollection) {
         ticketIds: [],
         totalFinalStoryPoints: 0,
         status: 'active',
+        archived: false,
         createdAt: timestamp,
         updatedAt: timestamp,
       })
@@ -57,6 +58,15 @@ export function createSprintService(collection: SprintCollection) {
         totalFinalStoryPoints: calculateSprintTotal(sprintTickets),
         status: 'completed',
         completedAt: timestamp,
+        updatedAt: timestamp,
+      })
+    },
+
+    async setArchived(sprint: Sprint, archived: boolean) {
+      const timestamp = now()
+      return collection.update<Sprint>(sprint.id, {
+        archived,
+        archivedAt: archived ? timestamp : undefined,
         updatedAt: timestamp,
       })
     },

@@ -159,7 +159,8 @@ export function usePlanningPoker(
   const activeSprintPointsPerDay = activeSprint
     ? calculatePointsPerDay(activeSprintTotal, activeSprint.durationDays)
     : 0
-  const averageVelocity = calculateAverageVelocity(historicalSprints)
+  const velocitySprints = historicalSprints.filter((sprint) => !sprint.archived)
+  const averageVelocity = calculateAverageVelocity(velocitySprints)
   const activeSprintLocked = activeSprint?.status === 'completed'
   const activeTicket = sprintTickets.find((ticket) => ticket.id === session?.activeTicketId) ?? sprintTickets[0] ?? null
   const activeRound = activeTicket
@@ -397,6 +398,17 @@ export function usePlanningPoker(
     await refresh()
   }, [activeSprint, refresh, room, sessionEnded, sprintService, tickets])
 
+  const archiveSprint = useCallback(
+    async (sprintId: string, archived: boolean) => {
+      const sprint = sprints.find((candidate) => candidate.id === sprintId)
+      if (!sprint || sprint.status !== 'completed' || sessionEnded) return
+      await sprintService.setArchived(sprint, archived)
+      room.publish({ type: 'sprint:changed' })
+      await refresh()
+    },
+    [refresh, room, sessionEnded, sprintService, sprints],
+  )
+
   const endSession = useCallback(async () => {
     if (!session || !user || !isAdmin) return
     await collections.sessions.update<PlanningPokerSession>(session.id, {
@@ -419,6 +431,7 @@ export function usePlanningPoker(
     activeTicket,
     activeVotes,
     averageVelocity,
+    archiveSprint,
     canInteract,
     completeSprint,
     connectionState: room.connectionState,
