@@ -28,6 +28,11 @@ Built for FreeAppStore using React, TypeScript and the FreeAppStore SDK.
 8. Confirm the final consensus estimate
 9. End the session
 
+## User Guide
+
+For a complete Admin and Player walkthrough, see the
+[user guide](docs/USER_GUIDE.md).
+
 ## Tech Stack
 
 * React
